@@ -9,8 +9,9 @@ repos:
       - id: ruff-check
 
   - repo: https://github.com/psf/black
-    # Last black that still runs on Python 3.9 (the project's runtime floor);
-    # 25.12.0+ require 3.10+. Kept in sync with the [dev] cap in pyproject.toml.
+    # Kept in sync with the [dev] cap in pyproject.toml (<25.10); move both
+    # together by hand. Stay on a black that runs on Python 3.9 (the project's
+    # runtime floor): 25.11.0 is the last one, 25.12.0+ require 3.10.
     rev: 25.9.0
     hooks:
       - id: black

@@ -8,6 +8,11 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    ignore:
+      # The [dev] black cap tracks the black rev pinned in
+      # .pre-commit-config.yaml, and the two move together by hand. A
+      # Dependabot bump of the cap alone splits CI from the local hook.
+      - dependency-name: "black"
 
   # GitHub Actions used by the CI and publish workflows.
   - package-ecosystem: "github-actions"
