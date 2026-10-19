@@ -1,7 +1,8 @@
 # Pre-commit hooks for snowflake-sql-api. Install with `pre-commit install`
 # (the hook then runs on every commit); run the full set with
-# `pre-commit run --all-files`. Hook versions track the `[dev]` floors in
-# pyproject.toml.
+# `pre-commit run --all-files`. The black rev is pinned to match the `[dev]`
+# black cap in pyproject.toml (see its comment); the other revs are set here
+# independently of the `[dev]` floors.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.17
