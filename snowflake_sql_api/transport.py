@@ -1,10 +1,11 @@
 """HTTP transport against ``POST /api/v2/statements``.
 
 Owns the actual ``httpx`` calls (sync and async), status-code interpretation
-(200 success, 202 long-running/async, 422 execution failure, 401 auth, 403
-forbidden, 429/5xx retryable), the retry loop, and ``requestId`` reuse for idempotent retries. A
-retried submit re-POSTs the identical body with the same ``requestId`` and
-``retry=true`` so Snowflake deduplicates instead of double-applying DML.
+(200 success, 202 long-running/async, 422 execution failure, 401 auth,
+403 forbidden, 429/5xx retryable), the retry loop, and ``requestId`` reuse for
+idempotent retries. A retried submit re-POSTs the identical body with the same
+``requestId`` and ``retry=true`` so Snowflake deduplicates instead of
+double-applying DML.
 
 Higher layers (``client``/``aclient``) talk to the transport, not to ``httpx``.
 """

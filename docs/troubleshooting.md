@@ -36,7 +36,10 @@ Work through these in order:
 ## Forbidden requests (403 / `SnowflakeForbiddenError`)
 
 The JWT was accepted, but Snowflake refused the request. Retrying with the same
-identity will not help, so it is not retried. The exception carries the same
+identity will not help, so the default `RetryPolicy` does not retry it. (A
+custom policy that lists 403 in `retry_statuses` surfaces it as
+`SnowflakeRetryError` instead, with a plain `SnowflakeRequestError` as the
+`__cause__`.) The exception carries the same
 fields as `SnowflakeRequestError` (`status_code`, `code`, `sql_state`,
 `statement_handle`) and subclasses it, so an existing
 `except SnowflakeRequestError` still catches it.
