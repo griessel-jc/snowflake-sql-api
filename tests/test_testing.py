@@ -137,8 +137,6 @@ def test_register_match_predicate() -> None:
 
 
 def test_unregistered_statement_raises() -> None:
-    # Single `with` per statement here: a parenthesized multi-context `with`
-    # is 3.10+ syntax and breaks the 3.9 leg of the test matrix.
     fake = FakeSnowflake()
     client = make_client(fake)
     with pytest.raises(FakeSnowflakeError, match="no result registered"):

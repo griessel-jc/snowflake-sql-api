@@ -7,7 +7,7 @@ name = "snowflake-sql-api"
 dynamic = ["version"]
 description = "Lightweight, pure-Python client for Snowflake's SQL API v2"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "hampsterx" }]
 keywords = ["snowflake", "sql", "rest", "api", "httpx", "serverless", "lambda"]
@@ -17,11 +17,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Database",
     "Typing :: Typed",
@@ -41,12 +41,10 @@ dev = [
     "pytest-asyncio>=0.21",
     "respx>=0.20",
     "ruff>=0.4",
-    # Capped below 25.10 so CI formats with the same black the pre-commit hook
-    # pins (rev 25.9.0 in .pre-commit-config.yaml). Move the two together by
-    # hand; Dependabot ignores black (.github/dependabot.yml). Keep the cap at
-    # or below 25.12 while Python 3.9 is supported: 25.12.0+ require 3.10, so
-    # a higher cap resolves a different black per interpreter.
-    "black>=24.0,<25.10",
+    # Held to 26.5.x so CI formats with the same black the pre-commit hook
+    # pins (rev 26.5.1 in .pre-commit-config.yaml). Move the two together by
+    # hand; Dependabot ignores black (.github/dependabot.yml).
+    "black>=26.5,<26.6",
     "mypy>=1.8",
     "build>=1.0",
     "pre-commit>=3.5",
@@ -89,13 +87,13 @@ include = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "C4", "SIM"]
-# E501 (line length) is owned by black. `UP` (pyupgrade) is omitted: it would
-# rewrite runtime type aliases like `Optional[Sequence[Any]]` to `X | None`,
-# which raises at import time on Python 3.9 (PEP 604 on typing generics is 3.10+).
+# E501 (line length) is owned by black. `UP` (pyupgrade) is not enabled yet: the
+# code predates the 3.11 floor and still spells `Optional`/`List`, so turning it
+# on is a ~250-site annotation rewrite of its own.
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -103,14 +101,14 @@ ignore = ["E501"]
 
 [tool.black]
 line-length = 88
-# Pin to py39 grammar: our code uses no newer syntax, and a single floor target
-# keeps black's AST safety check parseable by the interpreter running CI.
-target-version = ["py39"]
+# Pin to the floor's grammar: a single floor target keeps black's AST safety
+# check parseable by the interpreter running CI.
+target-version = ["py311"]
 
 [tool.mypy]
-# Lowest target this mypy accepts; true 3.9 runtime compat is gated by the
-# pytest matrix (3.9-3.13), which imports every module under each interpreter.
-python_version = "3.10"
+# The runtime floor; the pytest matrix (3.11-3.15) imports every module under
+# each supported interpreter.
+python_version = "3.11"
 files = ["snowflake_sql_api"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
