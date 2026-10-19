@@ -116,14 +116,6 @@ the linked regression test first.
   (`query_stream`, Phase 8). The hook fires for `query`/`execute`/`submit` today;
   there is no streaming path yet, so no regression test until the feature lands
   (this is spike bug #2, intentionally not yet covered).
-- **No PEP 604 unions at runtime** (py3.9 floor). ruff's `UP` (pyupgrade) rule is
-  omitted on purpose: it would rewrite `Optional[...]` / `Union[...]` to
-  `X | None`, which raises at import time on 3.9 for typing generics (PEP 604 on
-  generics is 3.10+). Keep `from __future__ import annotations` plus
-  `Optional`/`Union`.
-- **mypy `python_version = "3.10"` vs the 3.9-3.13 matrix.** 3.10 is the lowest
-  this mypy accepts; true 3.9 runtime compatibility is enforced by the pytest
-  matrix, which imports every module under 3.9.
 - **Coverage uses `coverage run`, not `pytest --cov`.** The package ships a pytest
   plugin via the `pytest11` entry point, so `snowflake_sql_api.testing` (and the
   whole package) is imported at plugin-load time, before pytest-cov starts
@@ -140,7 +132,7 @@ the linked regression test first.
   fixtures). No respx. See `docs/testing.md`.
 - Each fixed bug gets a named regression test (`test_regression_*`) so it cannot
   silently return.
-- Target coverage: >= 89%, enforced across Python 3.9-3.13. Run with
+- Target coverage: >= 89%, enforced across Python 3.11-3.15. Run with
   `coverage run -m pytest && coverage report` (see Known Quirks).
 
 ## Common Mistakes
@@ -153,7 +145,6 @@ the linked regression test first.
 - Adding a runtime dependency without strong justification. The small
   install / fast cold start is the whole point; new optional features go behind
   an extra.
-- Rewriting `Optional[...]` to `X | None` (breaks the 3.9 runtime).
 - Conflating the JWT claim account with the API host (see Known Quirks).
 - Forgetting the async counterpart of a sync change (sync/async parity).
 - Forgetting a `test_regression_*` for a fixed bug.

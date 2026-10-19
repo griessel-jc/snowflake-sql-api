@@ -178,6 +178,9 @@ def coerce_rows(raw_rows: List[List[Any]], columns: List[ColumnMeta]) -> List[Ro
     """Coerce a partition of raw rows into a list of name-keyed :data:`Row`."""
     names = [c.name for c in columns]
     return [
-        {name: coerce_value(cell, col) for name, col, cell in zip(names, columns, row)}
+        {
+            name: coerce_value(cell, col)
+            for name, col, cell in zip(names, columns, row, strict=False)
+        }
         for row in raw_rows
     ]

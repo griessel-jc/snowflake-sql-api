@@ -17,9 +17,8 @@ updates:
       # would match nothing. Security updates are not blocked by it: in
       # dependabot-core, IgnoreCondition#ignored_versions returns early for
       # security_updates_only with just the explicit `versions`, and a
-      # name-only ignore has none. Black's security fixes since 25.9.0 need
-      # Python 3.10+, so a security PR for it is a decision about the 3.9
-      # floor and the hook rev, not a plain merge.
+      # name-only ignore has none. A security PR for it still has to move
+      # the hook rev in .pre-commit-config.yaml alongside the cap.
       - dependency-name: "black"
 
   # GitHub Actions used by the CI and publish workflows.

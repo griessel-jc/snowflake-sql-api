@@ -34,7 +34,7 @@ All four must pass (and `pre-commit run --all-files` is clean). Use `coverage ru
 (`snowflake_sql_api.testing`), and `coverage run` starts tracing before that
 plugin is imported so import-time lines are measured correctly. The coverage gate
 is enforced (`fail_under = 89` in `pyproject.toml`); `coverage report` exits
-non-zero below it. CI runs the same checks across Python 3.9-3.13.
+non-zero below it. CI runs the same checks across Python 3.11-3.15.
 
 Checklist:
 

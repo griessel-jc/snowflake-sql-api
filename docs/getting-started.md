@@ -17,7 +17,7 @@ pip install "snowflake-sql-api[pandas]"    # DataFrame output helpers
 pip install "snowflake-sql-api[pydantic]"  # typed-row mapping
 ```
 
-Requires Python 3.9 or newer. Core dependencies are `httpx`, `PyJWT`, and
+Requires Python 3.11 or newer. Core dependencies are `httpx`, `PyJWT`, and
 `cryptography`.
 
 ## Prerequisites
