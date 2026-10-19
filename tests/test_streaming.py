@@ -105,11 +105,28 @@ async def test_invalid_batch_sizes_fail_before_submission(
 
 @pytest.mark.parametrize("method", ["query_stream", "query_batches"])
 async def test_closing_streams_does_not_fetch_or_close_client(
-    async_mode: bool, method: str
+    async_mode: bool, method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = FakeSnowflake()
     fake.register("SELECT n", [{"N": 1}, {"N": 2}], partitions=2)
     async with fake_client(fake, async_mode) as client:
+        captured = []
+        original = client._stream_result
+        if async_mode:
+
+            async def capture(*args: Any) -> Any:
+                result = await original(*args)
+                captured.append(result[1])
+                return result
+
+        else:
+
+            def capture(*args: Any) -> Any:
+                result = original(*args)
+                captured.append(result[1])
+                return result
+
+        monkeypatch.setattr(client, "_stream_result", capture)
         kwargs = {"batch_size": 1} if method == "query_batches" else {}
         unstarted = getattr(client, method)("SELECT n", **kwargs)
         await close(unstarted, async_mode)
@@ -118,6 +135,8 @@ async def test_closing_streams_does_not_fetch_or_close_client(
         await advance(started, async_mode)
         await close(started, async_mode)
         assert len(fake.requests) == 1
+        inner = captured[0]
+        assert (inner.ag_frame if async_mode else inner.gi_frame) is None
         assert await call(client, async_mode, "query_scalar", "SELECT n") == 1
 
 
