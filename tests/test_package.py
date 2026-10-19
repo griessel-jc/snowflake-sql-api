@@ -10,6 +10,7 @@ import snowflake_sql_api as sf
 from snowflake_sql_api.exceptions import (
     ResultNotReady,
     SnowflakeError,
+    SnowflakeForbiddenError,
     SnowflakeProgrammingError,
     SnowflakeRequestError,
 )
@@ -39,6 +40,8 @@ def test_exception_hierarchy() -> None:
     assert issubclass(ResultNotReady, SnowflakeError)
     # A programming error is a request error (HTTP 422 specialization).
     assert issubclass(SnowflakeProgrammingError, SnowflakeRequestError)
+    # So is a forbidden error (HTTP 403 specialization), keeping 403 non-breaking.
+    assert issubclass(SnowflakeForbiddenError, SnowflakeRequestError)
 
 
 def test_request_error_carries_envelope_fields() -> None:

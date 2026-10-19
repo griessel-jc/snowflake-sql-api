@@ -9,6 +9,7 @@ import respx
 from snowflake_sql_api.auth import KeypairAuthenticator
 from snowflake_sql_api.exceptions import (
     SnowflakeAuthError,
+    SnowflakeForbiddenError,
     SnowflakeProgrammingError,
     SnowflakeRequestError,
     SnowflakeRetryError,
@@ -146,6 +147,28 @@ def test_retry_exhaustion_raises_retry_error(private_key_pem: bytes) -> None:
     with pytest.raises(SnowflakeRetryError):
         transport.submit({"statement": "x"}, request_id="r1")
     assert route.call_count == 3  # max_attempts
+
+
+@respx.mock
+def test_custom_policy_retrying_403_chains_plain_request_error(
+    private_key_pem: bytes,
+) -> None:
+    # Retried statuses never reach _interpret, so an exhausted 403 retry carries
+    # the generic SnowflakeRequestError as its cause, like every other status.
+    route = respx.post(STATEMENTS_URL).mock(
+        return_value=httpx.Response(403, json={"message": "forbidden"})
+    )
+    retry_403 = RetryPolicy(
+        max_attempts=2, base_backoff=0.0, jitter=False, retry_statuses=frozenset({403})
+    )
+    transport = make_transport(private_key_pem, retry=retry_403)
+    with pytest.raises(SnowflakeRetryError) as info:
+        transport.submit({"statement": "x"}, request_id="r1")
+    cause = info.value.__cause__
+    assert isinstance(cause, SnowflakeRequestError)
+    assert not isinstance(cause, SnowflakeForbiddenError)
+    assert cause.status_code == 403
+    assert route.call_count == 2
 
 
 @respx.mock

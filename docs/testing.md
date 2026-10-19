@@ -74,6 +74,9 @@ assert client.execute("DELETE FROM t WHERE id = 1") == 1
 
 fake.register_error("SELECT bad syntax", "SQL compilation error", code="000904")
 # client.query("SELECT bad syntax") now raises SnowflakeProgrammingError
+
+fake.register_error("SELECT 1", "SQL API is not enabled", status=403)
+# client.query("SELECT 1") now raises SnowflakeForbiddenError
 ```
 
 ## Multi-partition results
