@@ -10,9 +10,9 @@ repos:
       - id: ruff-check
 
   - repo: https://github.com/psf/black
-    # Kept in sync with the [dev] cap in pyproject.toml (<25.10); move both
+    # Kept in sync with the [dev] cap in pyproject.toml (<26.6); move both
     # together by hand.
-    rev: 25.9.0
+    rev: 26.5.1
     hooks:
       - id: black
 
