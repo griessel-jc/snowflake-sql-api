@@ -25,6 +25,12 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 PASSPHRASE = b"correct horse battery staple"
 
 
+@pytest.fixture(params=[False, True], ids=["sync", "async"])
+def async_mode(request: pytest.FixtureRequest) -> bool:
+    """Exercise each new streaming contract on both client surfaces."""
+    return bool(request.param)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Load shipped testing fixtures when pytest11 entry points are unavailable."""
     if not config.pluginmanager.hasplugin("snowflake_sql_api"):

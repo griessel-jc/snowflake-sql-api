@@ -81,9 +81,18 @@ with SnowflakeClient(account="myorg-myaccount", user="MY_USER",
 | `execute(sql, params)` | rows affected (DML/DDL) |
 | `insert_many(table, columns, rows)` | rows inserted (batched, bound) |
 | `submit(sql, params)` | a `QueryHandle` for a long-running statement |
+| `query_stream(sql, params)` | a lazy generator of converted rows |
+| `query_batches(sql, params, batch_size=1000)` | lazy batches of at most the requested row count |
+| `export_csv(sql, output, params)` | data-row count written to a caller-owned text sink, with a CSV header |
+| `export_jsonl(sql, output, params)` | row count written as one JSON object per line |
 
 Bind parameters are positional (`?`) and always sent as server-side bindings,
 never string-interpolated.
+
+Streams submit on first iteration and fetch later result partitions on demand.
+Use `async for` directly with the async streaming methods and await async export
+methods. See [streaming.md](streaming.md) for memory limits, file examples, and
+failure behavior.
 
 ## Configuration from the environment
 
@@ -119,6 +128,9 @@ async def main():
 ```
 
 ## Next steps
+
+- [streaming.md](streaming.md): process large results, use bounded batches, and
+  export CSV or JSONL.
 
 - [authentication.md](authentication.md): keypair setup, encrypted keys, the
   account-locator region gotcha.

@@ -1,8 +1,8 @@
 """Named regression tests for the four spike-discovered bugs, plus later fixes.
 
 Each fixed bug gets a test marked ``regression`` so ``pytest -k regression``
-proves they stay fixed. Bug #2 (on_query in the streaming path) lands with
-``query_stream`` in the v0.2.0 toolkit (Phase 8).
+proves they stay fixed. Bug #2 (on_query in the streaming path) is covered by
+``test_regression_bug2_stream_notifies_once_and_binds_params`` in test_streaming.py.
 """
 
 from __future__ import annotations

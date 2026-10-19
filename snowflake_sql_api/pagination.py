@@ -12,12 +12,21 @@ partition 0 silently truncates large results (regression bug #4).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Generator, List
+
+from .exceptions import SnowflakeRequestError
+from .types import ColumnMeta, Row, coerce_row
 
 if TYPE_CHECKING:
     from .transport import AsyncTransport, Transport
 
-__all__ = ["partition_count", "fetch_all_partitions", "fetch_all_partitions_async"]
+__all__ = [
+    "partition_count",
+    "fetch_all_partitions",
+    "fetch_all_partitions_async",
+    "iter_result_rows",
+    "iter_result_rows_async",
+]
 
 
 def partition_count(first_body: Dict[str, Any]) -> int:
@@ -51,3 +60,72 @@ async def fetch_all_partitions_async(
         response = await transport.get_statement(statement_handle, partition=index)
         rows.extend(_rows(response.body))
     return rows
+
+
+def _stream_data(body: Dict[str, Any]) -> List[Any]:
+    data = body.get("data")
+    if not isinstance(data, list):
+        raise SnowflakeRequestError("result partition data must be an array of rows")
+    return data
+
+
+def _stream_row(raw: Any, columns: List[ColumnMeta]) -> Row:
+    if not isinstance(raw, list) or len(raw) != len(columns):
+        raise SnowflakeRequestError(
+            f"result row must be an array with {len(columns)} values"
+        )
+    return coerce_row(raw, columns)
+
+
+def iter_result_rows(
+    transport: Transport,
+    statement_handle: str,
+    first_body: Dict[str, Any],
+    columns: List[ColumnMeta],
+) -> Generator[Row, None, None]:
+    """Decode rows on demand, releasing each partition before fetching the next."""
+    count = max(1, partition_count(first_body))
+    data = _stream_data(first_body)
+    del first_body
+    try:
+        for index in range(count):
+            if index:
+                data = _stream_data(
+                    transport.get_statement(statement_handle, partition=index).body
+                )
+            offset = 0
+            while offset < len(data):
+                yield _stream_row(data[offset], columns)
+                offset += 1
+            data = []
+    finally:
+        # A caller may retain a closed generator; release its buffered rows.
+        data = []
+
+
+async def iter_result_rows_async(
+    transport: AsyncTransport,
+    statement_handle: str,
+    first_body: Dict[str, Any],
+    columns: List[ColumnMeta],
+) -> AsyncGenerator[Row, None]:
+    """Async variant of iter_result_rows, without partition prefetch."""
+    count = max(1, partition_count(first_body))
+    data = _stream_data(first_body)
+    del first_body
+    try:
+        for index in range(count):
+            if index:
+                data = _stream_data(
+                    (
+                        await transport.get_statement(statement_handle, partition=index)
+                    ).body
+                )
+            offset = 0
+            while offset < len(data):
+                yield _stream_row(data[offset], columns)
+                offset += 1
+            data = []
+    finally:
+        # A caller may retain a closed generator; release its buffered rows.
+        data = []

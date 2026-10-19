@@ -24,7 +24,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-__all__ = ["Row", "ColumnMeta", "coerce_value", "coerce_rows"]
+__all__ = ["Row", "ColumnMeta", "coerce_value", "coerce_row", "coerce_rows"]
 
 #: A result row keyed by column name (Snowflake returns names as declared).
 Row = Dict[str, Any]
@@ -174,13 +174,14 @@ def coerce_value(raw: Any, column: ColumnMeta) -> Any:
     return raw
 
 
+def coerce_row(raw_row: List[Any], columns: List[ColumnMeta]) -> Row:
+    """Coerce a single row using the result's column metadata."""
+    return {
+        col.name: coerce_value(cell, col)
+        for col, cell in zip(columns, raw_row, strict=False)
+    }
+
+
 def coerce_rows(raw_rows: List[List[Any]], columns: List[ColumnMeta]) -> List[Row]:
     """Coerce a partition of raw rows into a list of name-keyed :data:`Row`."""
-    names = [c.name for c in columns]
-    return [
-        {
-            name: coerce_value(cell, col)
-            for name, col, cell in zip(names, columns, row, strict=False)
-        }
-        for row in raw_rows
-    ]
+    return [coerce_row(row, columns) for row in raw_rows]
