@@ -1,9 +1,15 @@
 # snowflake-sql-api
 
+[![CI](https://github.com/hampsterx/snowflake-sql-api/actions/workflows/ci.yml/badge.svg)](https://github.com/hampsterx/snowflake-sql-api/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/snowflake-sql-api)](https://pypi.org/project/snowflake-sql-api/)
+[![Python versions](https://img.shields.io/pypi/pyversions/snowflake-sql-api)](https://pypi.org/project/snowflake-sql-api/)
+[![License: MIT](https://img.shields.io/pypi/l/snowflake-sql-api)](LICENSE)
+[![Typed](https://img.shields.io/badge/typing-typed-blue)](https://peps.python.org/pep-0561/)
+
 A lightweight, pure-Python client for [Snowflake's SQL API v2](https://docs.snowflake.com/en/developer-guide/sql-api/index)
 (the `POST /api/v2/statements` REST endpoint).
 
-> **Status: in active development, not yet released.** The API may change before `v0.1.0`.
+> **Status: pre-1.0.** The API may still change between minor versions.
 
 ## Why
 
