@@ -8,6 +8,7 @@ types below.
 |-----------|-------------|
 | `SnowflakeConfigError` | bad/missing config, before any request (no key, unreadable key, missing extra) |
 | `SnowflakeAuthError` | JWT generation or Snowflake auth failed (HTTP 401) |
+| `SnowflakeForbiddenError` | Snowflake refused an authenticated request (HTTP 403); a `SnowflakeRequestError` subclass |
 | `SnowflakeProgrammingError` | the SQL failed to compile or execute (HTTP 422) |
 | `SnowflakeRequestError` | an HTTP/protocol-level failure (carries `code`, `sql_state`, `status_code`) |
 | `SnowflakeTimeoutError` | an HTTP request or a statement exceeded its timeout |
@@ -31,6 +32,36 @@ Work through these in order:
 4. **Encrypted key.** A passphrase-protected key without the right
    `private_key_passphrase` raises `SnowflakeConfigError` at construction, not a
    401.
+
+## Forbidden requests (403 / `SnowflakeForbiddenError`)
+
+The JWT was accepted, but Snowflake refused the request. Retrying with the same
+identity will not help, so it is not retried. The exception carries the same
+fields as `SnowflakeRequestError` (`status_code`, `code`, `sql_state`,
+`statement_handle`) and subclasses it, so an existing
+`except SnowflakeRequestError` still catches it.
+
+Read the message first; it usually names the cause. Common ones:
+
+1. **SQL API not enabled.** Snowflake's SQL API reference gives this as the
+   cause of a 403. Check with your account administrator.
+2. **Network policy.** If the message names an IP address, an account- or
+   user-level network policy is blocking the caller, whatever the key. Compare
+   the egress IP your requests actually leave from (NAT, proxy, VPC gateway)
+   against the policy's allowed list.
+
+A role that lacks a privilege on a table or view is a different failure: the
+statement reaches Snowflake and fails to compile, which comes back as a 422
+`SnowflakeProgrammingError` ("does not exist or not authorized"), not a 403.
+
+```python
+from snowflake_sql_api.exceptions import SnowflakeForbiddenError
+
+try:
+    client.query("SELECT 1")
+except SnowflakeForbiddenError as exc:
+    print(exc.code, exc)
+```
 
 ## SQL errors (422 / `SnowflakeProgrammingError`)
 

@@ -1,4 +1,4 @@
-"""Named regression tests for the four spike-discovered bugs.
+"""Named regression tests for the four spike-discovered bugs, plus later fixes.
 
 Each fixed bug gets a test marked ``regression`` so ``pytest -k regression``
 proves they stay fixed. Bug #2 (on_query in the streaming path) lands with
@@ -11,15 +11,26 @@ import httpx
 import pytest
 import respx
 
-from snowflake_sql_api import SnowflakeClient
+from snowflake_sql_api import AsyncSnowflakeClient, SnowflakeClient
 from snowflake_sql_api.auth import normalize_account_locator
-from snowflake_sql_api.exceptions import ResultNotReady
+from snowflake_sql_api.exceptions import (
+    ResultNotReady,
+    SnowflakeForbiddenError,
+    SnowflakeRequestError,
+)
 
 from .support import ACCOUNT, STATEMENTS_URL, USER, ok_body, running_body, statement_url
 
 pytestmark = pytest.mark.regression
 
 INT_COL = [{"name": "N", "type": "fixed", "scale": 0}]
+
+FORBIDDEN_BODY = {
+    "code": "TEST403",
+    "message": "SQL API is not enabled for this account",
+    "sqlState": "TEST1",
+    "statementHandle": "forbidden-handle",
+}
 
 
 def test_regression_bug1_jwt_account_locator_strips_region() -> None:
@@ -85,3 +96,48 @@ def test_regression_bug4_fetches_all_partitions(private_key_pem: bytes) -> None:
     client.close()
     # Partition 0 (inline) + partitions 1 and 2, in order, none dropped.
     assert [r["N"] for r in rows] == [0, 1, 2, 3]
+
+
+def _assert_forbidden(exc: SnowflakeForbiddenError) -> None:
+    # Still a SnowflakeRequestError, so existing handlers keep catching 403.
+    assert isinstance(exc, SnowflakeRequestError)
+    assert exc.status_code == 403
+    assert exc.code == "TEST403"
+    assert exc.sql_state == "TEST1"
+    assert exc.statement_handle == "forbidden-handle"
+    assert str(exc) == "SQL API is not enabled for this account"
+
+
+@respx.mock
+def test_regression_403_raises_forbidden_error(private_key_pem: bytes) -> None:
+    """HTTP 403 maps to SnowflakeForbiddenError, not the generic request error.
+
+    An authenticated-but-refused request must be distinguishable from a
+    malformed one without parsing ``status_code``.
+    """
+    route = respx.post(STATEMENTS_URL).mock(
+        return_value=httpx.Response(403, json=FORBIDDEN_BODY)
+    )
+    client = SnowflakeClient(ACCOUNT, USER, private_key=private_key_pem)
+    with pytest.raises(SnowflakeForbiddenError) as info:
+        client.query("SELECT 1")
+    client.close()
+    _assert_forbidden(info.value)
+    # 403 is not retryable: one request, no retry loop.
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_regression_403_raises_forbidden_error_async(
+    private_key_pem: bytes,
+) -> None:
+    """Async parity for the 403 mapping."""
+    route = respx.post(STATEMENTS_URL).mock(
+        return_value=httpx.Response(403, json=FORBIDDEN_BODY)
+    )
+    client = AsyncSnowflakeClient(ACCOUNT, USER, private_key=private_key_pem)
+    with pytest.raises(SnowflakeForbiddenError) as info:
+        await client.query("SELECT 1")
+    await client.aclose()
+    _assert_forbidden(info.value)
+    assert route.call_count == 1

@@ -112,4 +112,8 @@ A `SnowflakeAuthError` (HTTP 401) almost always means one of:
 - an encrypted key supplied without (or with the wrong) passphrase, which raises
   a `SnowflakeConfigError` before any request.
 
-See [troubleshooting.md](troubleshooting.md) for more.
+A `SnowflakeForbiddenError` (HTTP 403) is a different failure: the key and
+claim were accepted, and Snowflake refused the request itself (for example a
+network policy, or the SQL API not being enabled). See
+[troubleshooting.md](troubleshooting.md#forbidden-requests-403--snowflakeforbiddenerror)
+for both.

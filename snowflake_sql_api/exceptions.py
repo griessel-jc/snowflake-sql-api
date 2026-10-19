@@ -14,6 +14,7 @@ __all__ = [
     "SnowflakeConfigError",
     "SnowflakeAuthError",
     "SnowflakeRequestError",
+    "SnowflakeForbiddenError",
     "SnowflakeProgrammingError",
     "SnowflakeTimeoutError",
     "SnowflakeRetryError",
@@ -60,6 +61,15 @@ class SnowflakeRequestError(SnowflakeError):
         self.sql_state = sql_state
         self.request_id = request_id
         self.statement_handle = statement_handle
+
+
+class SnowflakeForbiddenError(SnowflakeRequestError):
+    """Snowflake refused an authenticated request (HTTP 403).
+
+    The JWT was accepted but the request is not allowed, so retrying with the
+    same identity will not help. A subclass of :class:`SnowflakeRequestError`,
+    so existing handlers for that type still catch it.
+    """
 
 
 class SnowflakeProgrammingError(SnowflakeRequestError):
