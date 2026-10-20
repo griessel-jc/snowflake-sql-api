@@ -11,8 +11,19 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    TextIO,
+    Tuple,
+)
 
 import httpx
 
@@ -25,7 +36,13 @@ from .exceptions import (
     SnowflakeRequestError,
     SnowflakeTimeoutError,
 )
-from .pagination import fetch_all_partitions
+from .exports import (
+    CSVWriter,
+    validate_batch_size,
+    validate_export_columns,
+    write_jsonl,
+)
+from .pagination import fetch_all_partitions, iter_result_rows
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from .transport import StatementResponse, Transport
 from .types import ColumnMeta, Row, coerce_rows
@@ -246,13 +263,13 @@ class SnowflakeClient:
                 )
             time.sleep(self._poll_interval)
 
-    def _collect(
+    def _prepare_result(
         self,
         response: StatementResponse,
         *,
         timeout: Optional[float],
         poll: bool = True,
-    ) -> Tuple[List[ColumnMeta], List[List[Any]]]:
+    ) -> Tuple[List[ColumnMeta], str, Dict[str, Any]]:
         if response.is_running:
             if not poll:
                 raise ResultNotReady(statement_handle=response.statement_handle)
@@ -265,8 +282,27 @@ class SnowflakeClient:
         handle = response.statement_handle
         if handle is None:
             raise SnowflakeRequestError("completed statement has no handle")
-        raw_rows = fetch_all_partitions(self._transport, handle, body)
-        return columns, raw_rows
+        return columns, handle, body
+
+    def _collect(
+        self,
+        response: StatementResponse,
+        *,
+        timeout: Optional[float],
+        poll: bool = True,
+    ) -> Tuple[List[ColumnMeta], List[List[Any]]]:
+        columns, handle, body = self._prepare_result(
+            response, timeout=timeout, poll=poll
+        )
+        return columns, fetch_all_partitions(self._transport, handle, body)
+
+    def _stream_result(
+        self, sql: str, params: Params
+    ) -> Tuple[List[ColumnMeta], Generator[Row, None, None]]:
+        columns, handle, body = self._prepare_result(
+            self._run(sql, params), timeout=self._statement_timeout
+        )
+        return columns, iter_result_rows(self._transport, handle, body, columns)
 
     # -- query surface ----------------------------------------------------
 
@@ -275,6 +311,60 @@ class SnowflakeClient:
         response = self._run(sql, params)
         columns, raw_rows = self._collect(response, timeout=self._statement_timeout)
         return coerce_rows(raw_rows, columns)
+
+    def query_stream(
+        self, sql: str, params: Params = None
+    ) -> Generator[Row, None, None]:
+        """Yield converted rows, submitting on first iteration without prefetch.
+
+        Memory scales with the largest decoded server partition. Keep the client
+        open while iterating; close a retained stream when stopping early.
+        """
+        _, rows = self._stream_result(sql, params)
+        yield from rows
+
+    def query_batches(
+        self, sql: str, params: Params = None, *, batch_size: int = 1000
+    ) -> Generator[List[Row], None, None]:
+        """Yield batches of at most batch_size rows across partition boundaries."""
+        validate_batch_size(batch_size)
+        with closing(self.query_stream(sql, params)) as rows:
+            batch: List[Row] = []
+            for row in rows:
+                batch.append(row)
+                if len(batch) == batch_size:
+                    yield batch
+                    batch = []
+            if batch:
+                yield batch
+
+    def export_csv(self, sql: str, output: TextIO, params: Params = None) -> int:
+        """Stream CSV with a header to an open text sink; return the data-row count.
+
+        The caller owns the sink. Failures propagate and may leave partial output.
+        """
+        columns, rows = self._stream_result(sql, params)
+        with closing(rows):
+            writer = CSVWriter(output, columns)
+            count = 0
+            for row in rows:
+                writer.write(row)
+                count += 1
+        return count
+
+    def export_jsonl(self, sql: str, output: TextIO, params: Params = None) -> int:
+        """Stream JSON objects to an open text sink; return the row count.
+
+        The caller owns the sink. Failures propagate and may leave partial output.
+        """
+        columns, rows = self._stream_result(sql, params)
+        with closing(rows):
+            validate_export_columns(columns)
+            count = 0
+            for row in rows:
+                write_jsonl(output, row)
+                count += 1
+        return count
 
     def query_one(self, sql: str, params: Params = None) -> Optional[Row]:
         """Return the first row, or ``None`` if the result is empty."""

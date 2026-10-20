@@ -29,6 +29,7 @@ stays small and cold-starts quickly. Core dependencies: `httpx`, `PyJWT`,
 - Keypair (JWT) authentication, including encrypted private keys
 - Result type coercion (NUMBER/Decimal, dates/timestamps, VARIANT, and more)
 - Multi-partition result handling for large result sets
+- Lazy row streams and bounded row batches, with CSV and JSONL exports
 - Query helpers, DML, batch insert, async statement submission
 - A small CLI for ad-hoc queries
 - Optional pandas (`[pandas]`) and typed-row (`[pydantic]`) helpers, kept out of
@@ -74,6 +75,22 @@ CLI:
 snowflake-sql-api query "SELECT current_version()"
 ```
 
+Stream large results or export them without collecting every row:
+
+```python
+with SnowflakeClient.from_env() as client:
+    for batch in client.query_batches("SELECT id, amount FROM sales", batch_size=500):
+        process(batch)
+
+    with open("sales.csv", "w", encoding="utf-8", newline="") as output:
+        count = client.export_csv("SELECT id, amount FROM sales", output)
+```
+
+Streaming fetches completed results one server partition at a time. Memory scales
+with the largest decoded partition plus the application batch. See
+[streaming results and exports](docs/streaming.md) for row streams, async usage,
+serialization, and partial-output behavior.
+
 ## Prior art and alternatives
 
 `snowflake-sql-api` is not the first REST-based Snowflake client. If it does not
@@ -88,10 +105,10 @@ fit your needs, one of these might:
 | [`rb_snowflake_client`](https://github.com/rinsed-org/rb-snowflake-client) | Ruby | Mature pure-Ruby SQL API client (streaming, connection pooling). |
 | [`rsql`](https://github.com/theseus-rs/rsql) | Rust | Multi-database SQL CLI with a Snowflake SQL API driver. |
 
-**How `snowflake-sql-api` differs:** pure Python over `httpx` with no dependency on
-the official connector (small install, fast cold start), paired sync and async
-clients, and keypair auth, type coercion, partition handling, and a CLI as tested
-first-class behavior.
+**How `snowflake-sql-api` differs:** pure Python over `httpx`, with no
+dependency on the official connector (small install, fast cold start), paired
+sync and async clients, keypair auth, type coercion, partition handling, and a
+CLI as tested first-class behavior.
 
 Note: the similarly named `snowflake-sql-api-async` and `snowflake-sql-api-client`
 are separate, unaffiliated projects.

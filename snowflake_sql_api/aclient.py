@@ -12,7 +12,17 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    TextIO,
+    Tuple,
+)
 
 import httpx
 
@@ -26,7 +36,13 @@ from .exceptions import (
     SnowflakeRequestError,
     SnowflakeTimeoutError,
 )
-from .pagination import fetch_all_partitions_async
+from .exports import (
+    CSVWriter,
+    validate_batch_size,
+    validate_export_columns,
+    write_jsonl,
+)
+from .pagination import fetch_all_partitions_async, iter_result_rows_async
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from .transport import AsyncTransport, StatementResponse
 from .types import ColumnMeta, Row, coerce_rows
@@ -201,13 +217,13 @@ class AsyncSnowflakeClient:
                 )
             await asyncio.sleep(self._poll_interval)
 
-    async def _collect(
+    async def _prepare_result(
         self,
         response: StatementResponse,
         *,
         timeout: Optional[float],
         poll: bool = True,
-    ) -> Tuple[List[ColumnMeta], List[List[Any]]]:
+    ) -> Tuple[List[ColumnMeta], str, Dict[str, Any]]:
         if response.is_running:
             if not poll:
                 raise ResultNotReady(statement_handle=response.statement_handle)
@@ -220,8 +236,27 @@ class AsyncSnowflakeClient:
         handle = response.statement_handle
         if handle is None:
             raise SnowflakeRequestError("completed statement has no handle")
-        raw_rows = await fetch_all_partitions_async(self._transport, handle, body)
-        return columns, raw_rows
+        return columns, handle, body
+
+    async def _collect(
+        self,
+        response: StatementResponse,
+        *,
+        timeout: Optional[float],
+        poll: bool = True,
+    ) -> Tuple[List[ColumnMeta], List[List[Any]]]:
+        columns, handle, body = await self._prepare_result(
+            response, timeout=timeout, poll=poll
+        )
+        return columns, await fetch_all_partitions_async(self._transport, handle, body)
+
+    async def _stream_result(
+        self, sql: str, params: Params
+    ) -> Tuple[List[ColumnMeta], AsyncGenerator[Row, None]]:
+        columns, handle, body = await self._prepare_result(
+            await self._run(sql, params), timeout=self._statement_timeout
+        )
+        return columns, iter_result_rows_async(self._transport, handle, body, columns)
 
     # -- query surface ----------------------------------------------------
 
@@ -232,6 +267,73 @@ class AsyncSnowflakeClient:
             response, timeout=self._statement_timeout
         )
         return coerce_rows(raw_rows, columns)
+
+    async def query_stream(
+        self, sql: str, params: Params = None
+    ) -> AsyncGenerator[Row, None]:
+        """Yield converted rows on demand; call directly with async for.
+
+        Submission starts on first iteration. Keep the client open while
+        consuming; await aclose() on a retained stream when stopping early.
+        """
+        _, rows = await self._stream_result(sql, params)
+        try:
+            async for row in rows:
+                yield row
+        finally:
+            await rows.aclose()
+
+    async def query_batches(
+        self, sql: str, params: Params = None, *, batch_size: int = 1000
+    ) -> AsyncGenerator[List[Row], None]:
+        """Yield batches of at most batch_size rows across partition boundaries."""
+        validate_batch_size(batch_size)
+        rows = self.query_stream(sql, params)
+        try:
+            batch: List[Row] = []
+            async for row in rows:
+                batch.append(row)
+                if len(batch) == batch_size:
+                    yield batch
+                    batch = []
+            if batch:
+                yield batch
+        finally:
+            await rows.aclose()
+
+    async def export_csv(self, sql: str, output: TextIO, params: Params = None) -> int:
+        """Await query I/O and write CSV to a caller-owned synchronous text sink.
+
+        Return the data-row count. Failures may leave partial output.
+        """
+        columns, rows = await self._stream_result(sql, params)
+        try:
+            writer = CSVWriter(output, columns)
+            count = 0
+            async for row in rows:
+                writer.write(row)
+                count += 1
+        finally:
+            await rows.aclose()
+        return count
+
+    async def export_jsonl(
+        self, sql: str, output: TextIO, params: Params = None
+    ) -> int:
+        """Await query I/O and write JSONL to a caller-owned synchronous text sink.
+
+        Return the row count. Failures may leave partial output.
+        """
+        columns, rows = await self._stream_result(sql, params)
+        try:
+            validate_export_columns(columns)
+            count = 0
+            async for row in rows:
+                write_jsonl(output, row)
+                count += 1
+        finally:
+            await rows.aclose()
+        return count
 
     async def query_one(self, sql: str, params: Params = None) -> Optional[Row]:
         """Return the first row, or ``None`` if the result is empty."""

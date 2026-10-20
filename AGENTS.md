@@ -34,6 +34,7 @@ Module layout under `snowflake_sql_api/` (clean separation, `py.typed`):
 | `types.py` | Result-set type coercion (VARIANT, Decimal, datetime/date/time) |
 | `escaping.py`, `bindings.py` | Parameter binding, bind-value escaping, identifier quoting |
 | `pagination.py` | Multi-partition result fetching (the SQL API splits large results into partitions) |
+| `exports.py` | CSV/JSONL serialization for caller-owned text sinks |
 | `exceptions.py` | Typed exception hierarchy |
 | `client.py` | Synchronous `SnowflakeClient` (query helpers, DML, batch insert, async-submit handle) |
 | `aclient.py` | Asynchronous client (same surface, `await`-based) |
@@ -112,10 +113,10 @@ the linked regression test first.
   partition 0 (inline) plus partitions 1..N (fetched by index). Stopping at
   partition 0 silently truncates large results. Regression:
   `test_regression_bug4`.
-- **`on_query` streaming hook is deferred** to the v0.2.0 toolkit
-  (`query_stream`, Phase 8). The hook fires for `query`/`execute`/`submit` today;
-  there is no streaming path yet, so no regression test until the feature lands
-  (this is spike bug #2, intentionally not yet covered).
+- **Streaming submits on first iteration.** `query_stream` and `query_batches`
+  are generators (async generators on the async client), so `on_query` fires
+  once when consumption starts, including when an export consumes the stream.
+  Regression: `test_regression_bug2_stream_notifies_once_and_binds_params`.
 - **Coverage uses `coverage run`, not `pytest --cov`.** The package ships a pytest
   plugin via the `pytest11` entry point, so `snowflake_sql_api.testing` (and the
   whole package) is imported at plugin-load time, before pytest-cov starts

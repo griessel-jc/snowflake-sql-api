@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from io import StringIO
 
 import pytest
 
@@ -116,3 +117,39 @@ async def test_select_one_and_partitions_async() -> None:
         assert await client.query_scalar("SELECT 1") == 1
         rows = await client.query(sql)
     assert len(rows) == PARTITION_ROWS
+
+
+async def test_streaming_and_exports_type_probe(async_mode: bool) -> None:
+    if async_mode:
+        async with AsyncSnowflakeClient.from_env() as client:
+            eager = await client.query(TYPE_PROBE)
+            streamed = [row async for row in client.query_stream(TYPE_PROBE)]
+            output = StringIO()
+            assert await client.export_jsonl(TYPE_PROBE, output) == 1
+    else:
+        with SnowflakeClient.from_env() as client:
+            eager = client.query(TYPE_PROBE)
+            streamed = list(client.query_stream(TYPE_PROBE))
+            output = StringIO()
+            assert client.export_jsonl(TYPE_PROBE, output) == 1
+    assert streamed == eager
+    assert len(output.getvalue().splitlines()) == 1
+
+
+async def test_streaming_large_result_count(async_mode: bool) -> None:
+    sql = (
+        "SELECT seq4() AS n, randstr(120, random()) AS s "
+        f"FROM TABLE(GENERATOR(ROWCOUNT => {PARTITION_ROWS}))"
+    )
+    count = 0
+    if async_mode:
+        async with AsyncSnowflakeClient.from_env() as client:
+            async for batch in client.query_batches(sql, batch_size=1000):
+                assert 0 < len(batch) <= 1000
+                count += len(batch)
+    else:
+        with SnowflakeClient.from_env() as client:
+            for batch in client.query_batches(sql, batch_size=1000):
+                assert 0 < len(batch) <= 1000
+                count += len(batch)
+    assert count == PARTITION_ROWS
