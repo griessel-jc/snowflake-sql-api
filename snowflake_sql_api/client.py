@@ -18,6 +18,7 @@ from typing import (
     Callable,
     Dict,
     Generator,
+    Iterable,
     List,
     Optional,
     Sequence,
@@ -28,6 +29,7 @@ from typing import (
 import httpx
 
 from .auth import KeypairAuthenticator, account_hostname
+from .batches import BatchWriteResult, _BatchExecution, _BatchPlanner
 from .bindings import to_bindings
 from .escaping import quote_identifier, quote_name
 from .exceptions import (
@@ -420,6 +422,52 @@ class SnowflakeClient:
         values_sql = ", ".join([placeholder] * len(rows))
         sql = f"INSERT INTO {quote_name(table)} ({cols_sql}) VALUES {values_sql}"
         return self.execute(sql, flat)
+
+    def insert_batches(
+        self,
+        table: str,
+        columns: Sequence[str],
+        rows: Iterable[Sequence[Any]],
+        *,
+        max_rows: int = 1000,
+        max_bytes: int = 1_000_000,
+    ) -> BatchWriteResult:
+        """Insert a single-pass source sequentially within row and wire-byte budgets.
+
+        Independent statements can commit before a later failure. BatchWriteError
+        reports confirmed progress and uncertain outcomes; see docs/batch-writes.md.
+        Input is an ordinary iterable, consumed on the calling thread.
+        """
+        planner = _BatchPlanner(
+            table, columns, rows, max_rows, max_bytes, self._build_payload
+        )
+        while (batch := planner.next_batch()) is not None:
+            try:
+                self._notify(batch.sql, batch.params)
+            except Exception as exc:
+                raise planner.error(exc, "validation") from exc
+            execution = _BatchExecution(planner, batch)
+            try:
+                response = self._transport.submit(
+                    {}, request_id=execution.failed.request_id, content=batch.content
+                )
+                execution.received(
+                    response.statement_handle,
+                    response.submission_attempts,
+                    response.is_running,
+                )
+                if response.is_running:
+                    handle = response.statement_handle
+                    if handle is None:
+                        raise SnowflakeRequestError("running statement has no handle")
+                    response = self._poll(handle, self._statement_timeout)
+                    execution.succeeded = True
+                affected = _rows_affected(response.body)
+            except Exception as exc:
+                raise execution.error(exc) from exc
+            planner.confirm(batch, affected)
+            del batch
+        return planner.result()
 
     # -- async submit -----------------------------------------------------
 
