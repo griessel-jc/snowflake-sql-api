@@ -965,8 +965,9 @@ async def test_successful_submit_keeps_handle_without_changing_body_or_other_req
 
 
 @pytest.mark.parametrize("final_has_handle", [False, True])
+@pytest.mark.parametrize("second_handle", ["second-h", None, ""])
 async def test_latest_nonempty_submission_handle_takes_precedence(
-    async_mode, private_key_pem, final_has_handle
+    async_mode, private_key_pem, final_has_handle, second_handle
 ):
     calls = 0
 
@@ -976,7 +977,8 @@ async def test_latest_nonempty_submission_handle_takes_precedence(
         if calls == 1:
             return httpx.Response(408, json={"statementHandle": "first-h"})
         if calls == 2:
-            return httpx.Response(503, json={"statementHandle": "second-h"})
+            body = {} if second_handle is None else {"statementHandle": second_handle}
+            return httpx.Response(503, json=body)
         body = {"message": "final rejection"}
         if final_has_handle:
             body["statementHandle"] = "final-h"
@@ -987,7 +989,7 @@ async def test_latest_nonempty_submission_handle_takes_precedence(
             await insert(client, async_mode, [[1]])
     assert calls == 3
     assert info.value.failed_batch.statement_handle == (
-        "final-h" if final_has_handle else "second-h"
+        "final-h" if final_has_handle else (second_handle or "first-h")
     )
     assert info.value.failed_batch.submission_attempts == 3
     assert info.value.outcome == "unknown"
