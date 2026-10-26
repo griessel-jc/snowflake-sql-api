@@ -786,3 +786,64 @@ def test_batch_write_error_pickles_and_copies_with_progress():
         assert type(recovered) is BatchWriteError
         assert recovered.args == error.args
         assert recovered.__dict__ == error.__dict__
+
+
+@pytest.mark.parametrize("after_lost_post", [False, True])
+async def test_regression_real_jwt_signing_failure_uses_actual_post_boundary(
+    async_mode, private_key_pem, monkeypatch, after_lost_post
+):
+    import jwt
+
+    import snowflake_sql_api.auth as auth_module
+
+    requests = []
+    original = jwt.exceptions.InvalidKeyError("local signing failed")
+    real_encode = auth_module.jwt.encode
+    calls = 0
+
+    def encode(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if not after_lost_post or calls > 1:
+            raise original
+        return real_encode(*args, **kwargs)
+
+    def handler(request):
+        requests.append(request)
+        # Force token renewal on the retry so the real signer runs again.
+        client._transport._auth._cached_token = None
+        raise httpx.ReadTimeout("lost response", request=request)
+
+    monkeypatch.setattr(auth_module.jwt, "encode", encode)
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1], [2]], max_rows=1)
+    assert len(requests) == int(after_lost_post)
+    assert info.value.consumed_rows == 1
+    assert info.value.failed_batch.submission_attempts == int(after_lost_post)
+    assert info.value.phase == "submission"
+    assert info.value.outcome == ("unknown" if after_lost_post else "not_executed")
+    assert info.value.__cause__ is original
+    assert original.submission_attempts == int(after_lost_post)
+
+
+async def test_unknown_attempt_metadata_is_not_proof_of_zero_posts(
+    async_mode, private_key_pem, monkeypatch
+):
+    original = RuntimeError("submission context unavailable")
+
+    def fail(*args, **kwargs):
+        raise original
+
+    async def async_fail(*args, **kwargs):
+        raise original
+
+    async with wire_client(lambda r: success(1), private_key_pem, async_mode) as client:
+        monkeypatch.setattr(
+            client._transport, "submit", async_fail if async_mode else fail
+        )
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1]])
+    assert info.value.outcome == "unknown"
+    assert info.value.__cause__ is original
+    assert not hasattr(original, "submission_attempts")

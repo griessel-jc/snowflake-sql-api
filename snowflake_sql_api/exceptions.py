@@ -87,10 +87,10 @@ class SnowflakeConfigError(SnowflakeError):
 
 
 class SnowflakeAuthError(SnowflakeError):
-    """Keypair JWT generation or Snowflake authentication failed.
+    """Snowflake rejected authentication (HTTP 401).
 
-    HTTP authentication failures carry the server envelope; local signing
-    failures have no status code or statement handle.
+    Carries the server envelope. Local JWT signing errors propagate with their
+    original types instead of being converted to this exception.
     """
 
     def __init__(
