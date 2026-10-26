@@ -991,3 +991,31 @@ async def test_latest_nonempty_submission_handle_takes_precedence(
     )
     assert info.value.failed_batch.submission_attempts == 3
     assert info.value.outcome == "unknown"
+
+
+@pytest.mark.parametrize("status", [200, 202])
+async def test_final_success_response_handle_wins_over_retained_handle(
+    async_mode, private_key_pem, status
+):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(408, json={"statementHandle": "first-h"})
+        return httpx.Response(
+            status,
+            json={"statementHandle": "final-h", "stats": {"numRowsInserted": 1}},
+        )
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        result = client._transport.submit(
+            {"statement": "INSERT INTO t VALUES (1)"}, request_id="rid"
+        )
+        result = await result if async_mode else result
+    assert calls == 2
+    assert result.statement_handle == "final-h"
+    assert result.body["statementHandle"] == "final-h"
+    assert result.submission_attempts == 2
+    assert result.is_running == (status == 202)

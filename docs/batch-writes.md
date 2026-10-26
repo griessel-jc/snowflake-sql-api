@@ -125,6 +125,13 @@ its response and local authentication prevents retrying, the outcome is `unknown
 HTTP authentication errors retain their status code and server envelope so they
 remain distinguishable from local token-generation errors.
 
+For statement submissions, `StatementResponse.statement_handle` and a propagated
+exception's `statement_handle` retain the latest nonempty handle from an earlier
+POST attempt when the final response or error omits one. A handle in the final
+response or error takes precedence. This also applies to the transport used by
+`execute()`, `query()` and `submit()`. Response bodies stay unchanged, and handles
+do not carry between independent operations.
+
 ## Recovery belongs to the application
 
 `next_row_index` is a progress boundary, not permission to skip an uncertain
