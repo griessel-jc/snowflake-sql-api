@@ -7,7 +7,8 @@ HTTP responses onto these types; see :mod:`snowflake_sql_api.transport`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from functools import partial
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .batches import BatchOutcome, BatchPhase, BatchWriteResult, FailedBatch
@@ -62,6 +63,20 @@ class BatchWriteError(SnowflakeError):
         self.phase = phase
         self.outcome = outcome
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        fields = {
+            key: getattr(self, key)
+            for key in (
+                "completed",
+                "next_row_index",
+                "consumed_rows",
+                "failed_batch",
+                "phase",
+                "outcome",
+            )
+        }
+        return partial(type(self), **fields), self.args, self.__dict__
+
 
 class SnowflakeConfigError(SnowflakeError):
     """Client constructed with invalid or missing configuration.
@@ -72,7 +87,26 @@ class SnowflakeConfigError(SnowflakeError):
 
 
 class SnowflakeAuthError(SnowflakeError):
-    """Keypair JWT generation or Snowflake authentication failed."""
+    """Keypair JWT generation or Snowflake authentication failed.
+
+    HTTP authentication failures carry the server envelope; local signing
+    failures have no status code or statement handle.
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        status_code: Optional[int] = None,
+        code: Optional[str] = None,
+        sql_state: Optional[str] = None,
+        statement_handle: Optional[str] = None,
+        submission_attempts: Optional[int] = None,
+    ) -> None:
+        super().__init__(*args, submission_attempts=submission_attempts)
+        self.status_code = status_code
+        self.code = code
+        self.sql_state = sql_state
+        self.statement_handle = statement_handle
 
 
 class SnowflakeRequestError(SnowflakeError):

@@ -339,7 +339,7 @@ async def test_batch_two_remote_fault_keeps_prefix_and_attempt_history(
     assert err.failed_batch.submission_attempts == attempts
     assert err.failed_batch.request_id == requests[1].url.params["requestId"]
     assert err.__cause__.submission_attempts == attempts
-    if status not in (401, 503):
+    if status != 503:
         assert err.failed_batch.statement_handle == "failed-h"
         assert err.__cause__.code == "000904"
         assert err.__cause__.sql_state == "42000"
@@ -630,3 +630,159 @@ async def test_transport_submit_and_get_attempt_metadata(async_mode, private_key
         assert response.submission_attempts is None
     assert calls == 4
     assert SnowflakeAuthError("x").submission_attempts is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"data": [["bad"]]},
+        {"stats": {"numRowsInserted": "bad"}},
+        {"data": [[None]]},
+        {"data": [[-1]]},
+        {"data": [[1.5]]},
+        {"stats": {"numRowsInserted": True}},
+        {},
+        {"data": [[]]},
+    ],
+)
+async def test_regression_invalid_affected_count_stops_batches_with_succeeded_outcome(
+    async_mode, private_key_pem, body
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=body)
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1], [2]], max_rows=1)
+    err = info.value
+    assert len(requests) == err.consumed_rows == 1
+    assert err.phase == "execution"
+    assert err.outcome == "succeeded"
+    assert err.completed.input_rows == err.next_row_index == 0
+    assert err.failed_batch.submission_attempts == 1
+    assert isinstance(err.__cause__, (ValueError, TypeError))
+
+
+async def test_affected_count_fallback_valid_and_existing_tolerance_preserved(
+    async_mode, private_key_pem
+):
+    malformed = False
+
+    def handler(request):
+        return httpx.Response(200, json={"data": [["bad" if malformed else "2"]]})
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        assert (await insert(client, async_mode, [[1], [2]])).rows_affected == 2
+        malformed = True
+        result = client.insert_many("t", ["v"], [[1]])
+        assert (await result if async_mode else result) == 0
+
+
+async def test_regression_raw_decoding_error_keeps_actual_post_attempts(
+    async_mode, private_key_pem
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            raise httpx.ReadTimeout("lost response", request=request)
+        return httpx.Response(
+            200, headers={"Content-Encoding": "gzip"}, content=b"corrupt gzip"
+        )
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1], [2]], max_rows=1)
+    assert len(requests) == 2
+    assert info.value.consumed_rows == 1
+    assert info.value.failed_batch.submission_attempts == 2
+    assert info.value.outcome == "unknown"
+    assert isinstance(info.value.__cause__, httpx.DecodingError)
+    assert info.value.__cause__.submission_attempts == 2
+
+
+async def test_regression_local_auth_failure_after_lost_post_is_unknown(
+    async_mode, private_key_pem, monkeypatch
+):
+    from snowflake_sql_api import SnowflakeAuthError
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        raise httpx.ReadTimeout("lost response", request=request)
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        token = client._transport._auth.token
+        calls = 0
+        original = SnowflakeAuthError("local signing failed")
+
+        def flaky_token():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise original
+            return token()
+
+        monkeypatch.setattr(client._transport._auth, "token", flaky_token)
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1], [2]], max_rows=1)
+    assert len(requests) == 1
+    assert info.value.failed_batch.submission_attempts == 1
+    assert info.value.phase == "submission"
+    assert info.value.outcome == "unknown"
+    assert info.value.__cause__ is original
+    assert original.status_code is None
+
+
+async def test_input_exhaustion_is_latched_after_partial_batch(
+    async_mode, private_key_pem
+):
+    class Once:
+        index = 0
+        stopped = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            assert not self.stopped, "advanced after exhaustion"
+            if self.index == 3:
+                self.stopped = True
+                raise StopIteration
+            self.index += 1
+            return [self.index]
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return success(row_count(request))
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        assert (await insert(client, async_mode, Once(), max_rows=2)).input_rows == 3
+    assert len(requests) == 2
+
+
+def test_batch_write_error_pickles_and_copies_with_progress():
+    import copy
+    import pickle
+
+    error = BatchWriteError(
+        "write stopped",
+        completed=BatchWriteResult((BatchSummary(0, 0, 2, 2),)),
+        next_row_index=2,
+        consumed_rows=4,
+        failed_batch=FailedBatch(1, 2, 2, "rid", "handle", 2),
+        phase="execution",
+        outcome="unknown",
+    )
+    error.submission_attempts = 2
+    for recovered in (copy.copy(error), pickle.loads(pickle.dumps(error))):
+        assert type(recovered) is BatchWriteError
+        assert recovered.args == error.args
+        assert recovered.__dict__ == error.__dict__

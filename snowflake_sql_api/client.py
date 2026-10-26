@@ -61,7 +61,16 @@ OnQuery = Callable[[str, "Params"], None]
 DEFAULT_POLL_TIMEOUT = 600.0
 
 
-def _rows_affected(body: Dict[str, Any]) -> int:
+def _affected_count(value: Any, strict: bool) -> int:
+    if strict and (isinstance(value, bool) or not isinstance(value, (int, str))):
+        raise ValueError("rows-affected count must be an integer")
+    count = int(value)
+    if strict and count < 0:
+        raise ValueError("rows-affected count must be nonnegative")
+    return count
+
+
+def _rows_affected(body: Dict[str, Any], *, strict: bool = False) -> int:
     """Extract the rows-affected count from a DML response."""
     stats = body.get("stats")
     if isinstance(stats, dict):
@@ -69,16 +78,19 @@ def _rows_affected(body: Dict[str, Any]) -> int:
         found = False
         for key in ("numRowsInserted", "numRowsUpdated", "numRowsDeleted"):
             if key in stats:
-                total += int(stats[key])
+                total += _affected_count(stats[key], strict)
                 found = True
         if found:
             return total
     data = body.get("data")
     if data and data[0]:
         try:
-            return int(data[0][0])
+            return _affected_count(data[0][0], strict)
         except (ValueError, TypeError):
-            pass
+            if strict:
+                raise
+    if strict:
+        raise ValueError("response has no rows-affected count")
     return 0
 
 
@@ -462,7 +474,7 @@ class SnowflakeClient:
                         raise SnowflakeRequestError("running statement has no handle")
                     response = self._poll(handle, self._statement_timeout)
                     execution.succeeded = True
-                affected = _rows_affected(response.body)
+                affected = _rows_affected(response.body, strict=True)
             except Exception as exc:
                 raise execution.error(exc) from exc
             planner.confirm(batch, affected)

@@ -112,11 +112,18 @@ error after multiple parent POST attempts is also `unknown`, even when the final
 response is 400, 401, 403 or 422. A later rejection cannot rule out an earlier
 attempt having executed. A successful response followed by an affected-count
 parsing failure has outcome `succeeded`, but is excluded from confirmed summaries.
+The batch API rejects missing, malformed, negative or non-integer affected counts;
+existing `execute()` and `insert_many()` count parsing keeps its behavior.
 
 `submission_attempts` is also optional metadata on library errors and transport
 `StatementResponse` objects. It counts actual statement POST attempts, including
 the first, and is `None` for GETs; batch errors retain the parent POST count
-separately while polling.
+separately while polling. The transport also attaches this count to other ordinary
+exceptions it propagates, preserving their original type and identity. Local
+authentication failure before any POST is `not_executed`; if a prior POST loses
+its response and local authentication prevents retrying, the outcome is `unknown`.
+HTTP authentication errors retain their status code and server envelope so they
+remain distinguishable from local token-generation errors.
 
 ## Recovery belongs to the application
 

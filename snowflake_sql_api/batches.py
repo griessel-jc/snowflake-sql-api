@@ -107,6 +107,7 @@ class _BatchPlanner:
         self.context: bytes | None = None
         self.single_overhead = 0
         self.pending: tuple[list[Any], list[bytes]] | None = None
+        self.exhausted = False
         self.consumed_rows = 0
         self.confirmed_rows = 0
         self.completed: list[BatchSummary] = []
@@ -132,6 +133,8 @@ class _BatchPlanner:
         )
 
     def _record(self) -> tuple[list[Any], list[bytes]] | None:
+        if self.exhausted:
+            return None
         try:
             if self.iterator is None:
                 self.iterator = iter(self.source)
@@ -140,6 +143,7 @@ class _BatchPlanner:
         try:
             row = next(self.iterator)
         except StopIteration:
+            self.exhausted = True
             return None
         except Exception as exc:
             raise self.error(exc, "input") from exc
@@ -283,6 +287,7 @@ class _BatchExecution:
                 self.phase, outcome = "execution", "failed"
             elif self.phase == "submission" and (
                 isinstance(cause, SnowflakeAuthError)
+                and (cause.status_code == 401 or self.failed.submission_attempts == 0)
                 or isinstance(cause, SnowflakeRequestError)
                 and cause.status_code in (400, 401, 403)
             ):

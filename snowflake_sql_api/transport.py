@@ -20,7 +20,6 @@ import httpx
 
 from .exceptions import (
     SnowflakeAuthError,
-    SnowflakeError,
     SnowflakeForbiddenError,
     SnowflakeProgrammingError,
     SnowflakeRequestError,
@@ -92,7 +91,13 @@ def _interpret(response: httpx.Response) -> StatementResponse:
             statement_handle=body.get("statementHandle"),
         )
     if status == 401:
-        raise SnowflakeAuthError(body.get("message", "authentication failed"))
+        raise SnowflakeAuthError(
+            body.get("message", "authentication failed"),
+            status_code=status,
+            code=body.get("code"),
+            sql_state=body.get("sqlState"),
+            statement_handle=body.get("statementHandle"),
+        )
     if status == 403:
         raise SnowflakeForbiddenError(
             body.get("message", "request forbidden"),
@@ -256,8 +261,9 @@ class Transport(_TransportBase):
             raise SnowflakeRetryError(
                 f"retries exhausted after {self._retry.max_attempts} attempts"
             ) from last_exc
-        except SnowflakeError as exc:
-            exc.submission_attempts = attempts if is_submit else None
+        except Exception as exc:
+            # Preserve original exception identity, including HTTPX decoding errors.
+            exc.submission_attempts = attempts if is_submit else None  # type: ignore[attr-defined]
             raise
 
     def close(self) -> None:
@@ -359,8 +365,9 @@ class AsyncTransport(_TransportBase):
             raise SnowflakeRetryError(
                 f"retries exhausted after {self._retry.max_attempts} attempts"
             ) from last_exc
-        except SnowflakeError as exc:
-            exc.submission_attempts = attempts if is_submit else None
+        except Exception as exc:
+            # Preserve original exception identity, including HTTPX decoding errors.
+            exc.submission_attempts = attempts if is_submit else None  # type: ignore[attr-defined]
             raise
 
     async def aclose(self) -> None:

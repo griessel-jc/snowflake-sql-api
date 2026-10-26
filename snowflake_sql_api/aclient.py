@@ -429,7 +429,7 @@ class AsyncSnowflakeClient:
                         raise SnowflakeRequestError("running statement has no handle")
                     response = await self._poll(handle, self._statement_timeout)
                     execution.succeeded = True
-                affected = _rows_affected(response.body)
+                affected = _rows_affected(response.body, strict=True)
             except Exception as exc:
                 raise execution.error(exc) from exc
             planner.confirm(batch, affected)
