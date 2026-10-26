@@ -339,10 +339,11 @@ async def test_batch_two_remote_fault_keeps_prefix_and_attempt_history(
     assert err.failed_batch.submission_attempts == attempts
     assert err.failed_batch.request_id == requests[1].url.params["requestId"]
     assert err.__cause__.submission_attempts == attempts
-    if status != 503:
-        assert err.failed_batch.statement_handle == "failed-h"
-        assert err.__cause__.code == "000904"
-        assert err.__cause__.sql_state == "42000"
+    assert err.failed_batch.statement_handle == "failed-h"
+    server_error = err.__cause__.__cause__ if status == 503 else err.__cause__
+    assert server_error.code == "000904"
+    assert server_error.sql_state == "42000"
+    assert server_error.statement_handle == "failed-h"
     assert len(notes) == 2
     assert len(requests) == 1 + attempts
     for request in requests[2:]:
@@ -847,3 +848,146 @@ async def test_unknown_attempt_metadata_is_not_proof_of_zero_posts(
     assert info.value.outcome == "unknown"
     assert info.value.__cause__ is original
     assert not hasattr(original, "submission_attempts")
+
+
+@pytest.mark.parametrize(
+    "final", [400, 401, 403, 422, "timeout", "decoding", "bad_count"]
+)
+async def test_regression_retry_retains_handle_from_earlier_post_response(
+    async_mode, private_key_pem, final
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(408, json={"statementHandle": "known-h"})
+        if final == "timeout":
+            raise httpx.ReadTimeout("lost response", request=request)
+        if final == "decoding":
+            return httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, content=b"corrupt gzip"
+            )
+        if final == "bad_count":
+            return httpx.Response(200, json={"stats": {"numRowsInserted": "bad"}})
+        return httpx.Response(
+            final, json={"message": "final error", "code": "final-code"}
+        )
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, iter([[1], [2]]), max_rows=1)
+    err = info.value
+    assert err.failed_batch.statement_handle == "known-h"
+    assert err.failed_batch.submission_attempts == (3 if final == "timeout" else 2)
+    assert err.outcome == ("succeeded" if final == "bad_count" else "unknown")
+    assert err.phase == ("execution" if final in (422, "bad_count") else "submission")
+    assert err.consumed_rows == 1
+    assert err.completed == BatchWriteResult()
+    assert err.next_row_index == 0
+    assert err.failed_batch.request_id == requests[0].url.params["requestId"]
+    assert len(requests) == err.failed_batch.submission_attempts
+    if final == "timeout":
+        assert isinstance(err.__cause__, SnowflakeRetryError)
+        assert isinstance(err.__cause__.__cause__, httpx.ReadTimeout)
+    elif final == "decoding":
+        assert isinstance(err.__cause__, httpx.DecodingError)
+    elif final == "bad_count":
+        assert isinstance(err.__cause__, ValueError)
+    else:
+        assert err.__cause__.code == "final-code"
+        assert err.__cause__.status_code == final
+    for request in requests[1:]:
+        assert request.content == requests[0].content
+        assert request.url.params["requestId"] == err.failed_batch.request_id
+        assert request.url.params["retry"] == "true"
+
+
+async def test_retained_submit_handle_can_poll_and_survives_poll_failure(
+    async_mode, private_key_pem
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(408, json={"statementHandle": "known-h"})
+        if len(requests) == 2:
+            return httpx.Response(202, json={"message": "still running"})
+        assert request.method == "GET"
+        assert request.url.path.endswith("/known-h")
+        return httpx.Response(403, json={"message": "poll forbidden"})
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, iter([[1], [2]]), max_rows=1)
+    assert len(requests) == 3
+    assert info.value.failed_batch.statement_handle == "known-h"
+    assert info.value.failed_batch.submission_attempts == 2
+    assert info.value.phase == "execution"
+    assert info.value.outcome == "unknown"
+    assert info.value.__cause__.submission_attempts is None
+    assert info.value.consumed_rows == 1
+
+
+async def test_successful_submit_keeps_handle_without_changing_body_or_other_requests(
+    async_mode, private_key_pem
+):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(408, json={"statementHandle": "known-h"})
+        return success(1)
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        transport = client._transport
+        result = transport.submit(
+            {"statement": "INSERT INTO t VALUES (1)"}, request_id="r"
+        )
+        result = await result if async_mode else result
+        assert result.statement_handle == "known-h"
+        assert result.submission_attempts == 2
+        assert "statementHandle" not in result.body
+        result = transport.get_statement("other-h")
+        result = await result if async_mode else result
+        assert result.statement_handle is None
+        assert result.submission_attempts is None
+        result = transport.submit(
+            {"statement": "INSERT INTO t VALUES (2)"}, request_id="r2"
+        )
+        result = await result if async_mode else result
+        assert result.statement_handle is None
+        assert result.submission_attempts == 1
+    assert calls == 4
+
+
+@pytest.mark.parametrize("final_has_handle", [False, True])
+async def test_latest_nonempty_submission_handle_takes_precedence(
+    async_mode, private_key_pem, final_has_handle
+):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(408, json={"statementHandle": "first-h"})
+        if calls == 2:
+            return httpx.Response(503, json={"statementHandle": "second-h"})
+        body = {"message": "final rejection"}
+        if final_has_handle:
+            body["statementHandle"] = "final-h"
+        return httpx.Response(400, json=body)
+
+    async with wire_client(handler, private_key_pem, async_mode) as client:
+        with pytest.raises(BatchWriteError) as info:
+            await insert(client, async_mode, [[1]])
+    assert calls == 3
+    assert info.value.failed_batch.statement_handle == (
+        "final-h" if final_has_handle else "second-h"
+    )
+    assert info.value.failed_batch.submission_attempts == 3
+    assert info.value.outcome == "unknown"
